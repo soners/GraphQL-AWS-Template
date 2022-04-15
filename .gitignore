@@ -1,0 +1,10 @@
+build/
+dist/
+bin/
+
+node_modules/
+
+.idea/
+src/**.js
+src/**.js.map
+**output**

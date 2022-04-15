@@ -1,0 +1,82 @@
+trigger:
+  - master
+
+resources:
+  - repo: self
+
+stages:
+  - stage: Build
+    displayName: Build image
+    jobs:
+      - job: Build
+        displayName: Build
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - task: Yarn@3
+            inputs:
+              arguments: 'install'
+
+          - task: Yarn@3
+            inputs:
+              arguments: 'transpile'
+
+          - task: CopyFiles@2
+            displayName: 'Copy node modules to artifact'
+            inputs:
+              SourceFolder: $(System.DefaultWorkingDirectory)/node_modules
+              Contents: '**'
+              TargetFolder: $(System.DefaultWorkingDirectory)/bin/node_modules
+
+          - task: CopyFiles@2
+            displayName: 'Copy CF templates to artifact'
+            inputs:
+              SourceFolder: $(System.DefaultWorkingDirectory)/cf
+              Contents: '**'
+              TargetFolder: $(System.DefaultWorkingDirectory)/bin
+
+          - publish: $(System.DefaultWorkingDirectory)/bin
+            displayName: Publish Package
+            artifact: dashboard-graphql-package-$(Build.BuildNumber)
+
+          - task: Docker@2
+            displayName: Build an image
+            inputs:
+              command: build
+              dockerfile: '$(Build.SourcesDirectory)/Dockerfile'
+              arguments: '-t graphql'
+              tags: master-$(Build.BuildId)
+
+          - task: ECRPushImage@1
+            inputs:
+              awsCredentials: AWS-Future
+              regionName: eu-west-1
+              repositoryName: graphql
+              sourceImageName: graphql
+              pushTag: master-$(Build.BuildId)
+
+
+          - task: AWSCLI@1
+            displayName: 'Package CloudFormation template'
+            inputs:
+              awsCredentials: AWS-Future
+              regionName: eu-west-1
+              awsCommand: cloudformation
+              awsSubCommand: package
+              awsArguments: --template-file cf/graphql-template.yml --s3-bucket graphql-deployment --output-template-file sam-output.yml
+
+          - task: CloudFormationCreateOrUpdateStack@1
+            displayName: 'Deploy CloudFormation Stack'
+            inputs:
+              awsCredentials: AWS-Future
+              regionName: eu-west-1
+              templateFile: sam-output.yml
+              stackName: master-graphql
+              capabilityAutoExpand: true
+              templateSource: file
+              templateParameters: |
+                []
+              templateParametersSource: inline
+              tags: |
+                Environment=Master
+                Source=AzureDevOps-$(Build.BuildId)
